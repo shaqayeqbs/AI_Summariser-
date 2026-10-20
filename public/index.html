@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f5f4f0">
+    <title>Briefly — text summariser</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="topbar">
+        <a class="wordmark" id="wordmark" href="/" aria-label="Briefly home"><span class="mark">b.</span> briefly</a>
+        <div class="topbar-actions">
+          <div class="language-switch" id="language-switch" role="group" aria-label="Language">
+            <button class="language-button is-active" type="button" data-language="en" aria-pressed="true">EN</button>
+            <button class="language-button" type="button" data-language="fa" aria-pressed="false">فا</button>
+          </div>
+          <span class="top-note"><span class="status-dot"></span><span id="top-note-text">Your thoughts, made clear</span></span>
+        </div>
+      </header>
+
+      <section class="intro" aria-labelledby="page-title">
+        <p class="eyebrow" id="intro-eyebrow">THE CLARITY TOOL</p>
+        <h1 id="page-title"><span id="headline-first">Less text.</span><br><span id="headline-second">More meaning.</span></h1>
+        <p class="intro-copy"><span id="intro-copy-first">Drop in an article, a long email, or any wall of text.</span><br class="desktop-break"><span id="intro-copy-second"> Get the good bits, without the scroll.</span></p>
+      </section>
+
+      <section class="workspace" id="workspace" aria-label="Text summariser">
+        <form id="summarise-form" class="input-card">
+          <div class="card-heading">
+            <label id="source-label" for="source-text">YOUR TEXT</label>
+            <span id="character-count">0 / 20,000</span>
+          </div>
+          <textarea id="source-text" name="text" maxlength="20000" placeholder="Paste something worth understanding…" required></textarea>
+          <div class="input-footer">
+            <span class="privacy-note"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M4.5 7V5a3.5 3.5 0 0 1 7 0v2M3.5 7h9v7h-9z"/></svg><span id="privacy-text">Your text is only used to create this summary</span></span>
+            <button id="summarise-button" class="primary-button" type="submit">
+              <span id="submit-label">Summarise</span>
+              <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M4 10h11m-4-4 4 4-4 4"/></svg>
+            </button>
+          </div>
+        </form>
+
+        <section id="result-card" class="result-card" aria-labelledby="result-title" hidden>
+          <div class="result-heading">
+            <div>
+              <p class="eyebrow" id="result-eyebrow">THE SHORT VERSION</p>
+              <h2 id="result-title">Your summary</h2>
+            </div>
+            <button id="clear-button" class="clear-button" type="button"><span id="clear-label">Clear</span> <span aria-hidden="true">×</span></button>
+          </div>
+          <p id="result-text" class="result-text" aria-live="polite" aria-atomic="false" dir="auto"></p>
+          <p id="loading-indicator" class="loading-indicator" role="status" hidden><span class="loading-dot"></span><span id="loading-text">Finding the signal in the noise…</span></p>
+          <div id="error-message" class="error-message" role="alert" hidden></div>
+        </section>
+      </section>
+
+      <footer class="page-footer"><span id="footer-first">Made for the curious, and the short on time.</span><span><span id="footer-second">ONE THING AT A TIME</span> <span aria-hidden="true">✳</span></span></footer>
+    </main>
+  </body>
+</html>
