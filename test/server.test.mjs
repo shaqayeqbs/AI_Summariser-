@@ -53,7 +53,7 @@ test("serves the page and streams a summary from the model endpoint", async (t) 
   });
   const providerPort = await listen(mockProvider);
   const { app, baseUrl } = await startApp({
-    OPENAI_API_KEY: "test-key",
+    OPENROUTER_API_KEY: "test-key",
     OPENAI_BASE_URL: `http://127.0.0.1:${providerPort}/v1/chat/completions`
   });
   t.after(() => {
@@ -110,7 +110,7 @@ test("validates language and localizes Persian validation errors", async (t) => 
   const mockProvider = createServer((request, response) => response.end());
   const providerPort = await listen(mockProvider);
   const { app, baseUrl } = await startApp({
-    OPENAI_API_KEY: "test-key",
+    OPENROUTER_API_KEY: "test-key",
     OPENAI_BASE_URL: `http://127.0.0.1:${providerPort}/v1/chat/completions`
   });
   t.after(() => {
@@ -145,5 +145,5 @@ test("returns a clear error when the API key is not configured", async (t) => {
     body: JSON.stringify({ text: "A sample source.", language: "fa" })
   });
   assert.equal(response.status, 503);
-  assert.match((await response.json()).error, /OPENAI_API_KEY/);
+  assert.match((await response.json()).error, /OPENROUTER_API_KEY/);
 });

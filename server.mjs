@@ -5,8 +5,8 @@ import path from "node:path";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT ?? 3000);
-const apiUrl = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1/chat/completions";
-const model = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+const apiUrl = process.env.OPENAI_BASE_URL ?? "https://openrouter.ai/api/v1/chat/completions";
+const model = process.env.OPENAI_MODEL ?? "openrouter/free";
 const maxTextLength = 20_000;
 const maxRequestBytes = maxTextLength * 6 + 1024;
 const errorMessages = {
@@ -14,13 +14,13 @@ const errorMessages = {
     emptyText: "Paste some text to summarise.",
     textTooLong: (limit) => `Text must be ${limit} characters or fewer.`,
     invalidLanguage: "Language must be en or fa.",
-    missingApiKey: "The server is missing OPENAI_API_KEY. Add it to your environment and restart the app."
+    missingApiKey: "The server is missing OPENROUTER_API_KEY. Add it to your environment and restart the app."
   },
   fa: {
     emptyText: "لطفاً متنی برای خلاصه‌سازی وارد کنید.",
     textTooLong: (limit) => `متن باید حداکثر ${limit} نویسه باشد.`,
     invalidLanguage: "زبان باید انگلیسی یا فارسی باشد.",
-    missingApiKey: "کلید OPENAI_API_KEY در سرور تنظیم نشده است. آن را به متغیرهای محیطی اضافه کنید و برنامه را دوباره اجرا کنید."
+    missingApiKey: "کلید OPENROUTER_API_KEY در سرور تنظیم نشده است. آن را به متغیرهای محیطی اضافه کنید و برنامه را دوباره اجرا کنید."
   }
 };
 
@@ -78,7 +78,7 @@ async function handleSummarise(request, response) {
     return;
   }
 
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.OPENROUTER_API_KEY ?? process.env.OPENAI_API_KEY;
   if (!apiKey) {
     sendJson(response, 503, { error: messages.missingApiKey });
     return;
