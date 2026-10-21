@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f5f4f0">
     <title>Briefly — text summariser</title>
+    <script>
+      try {
+        const saved = localStorage.getItem("theme");
+        const dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+      } catch {}
+    </script>
     <link rel="stylesheet" href="/styles.css">
     <script src="/app.js" defer></script>
   </head>
@@ -17,6 +24,10 @@
             <button class="language-button is-active" type="button" data-language="en" aria-pressed="true">EN</button>
             <button class="language-button" type="button" data-language="fa" aria-pressed="false">فا</button>
           </div>
+          <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark mode" aria-pressed="false">
+            <svg class="icon-sun" aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="3.6"/><path d="M10 2v1.8M10 16.2V18M2 10h1.8M16.2 10H18M4.3 4.3l1.3 1.3M14.4 14.4l1.3 1.3M15.7 4.3l-1.3 1.3M5.6 14.4l-1.3 1.3"/></svg>
+            <svg class="icon-moon" aria-hidden="true" viewBox="0 0 20 20"><path d="M16.5 12.4A7 7 0 0 1 7.6 3.5a7 7 0 1 0 8.9 8.9Z"/></svg>
+          </button>
           <span class="top-note"><span class="status-dot"></span><span id="top-note-text">Your thoughts, made clear</span></span>
         </div>
       </header>

@@ -1,30 +1,28 @@
 # Briefly
 
-A small, local text summariser with streamed output in English and Persian (Farsi). The app uses OpenRouter's OpenAI-compatible streaming API by default, with its free-model router.
+A small, local text summariser with streamed output in English and Persian (Farsi). Summaries come from the free DeepSeek V4.1 Flash model on [opencode](https://opencode.ai), called through the `opencode` CLI.
 
 ## Run locally
 
-Requires Node.js 20 or later.
-
-Create an OpenRouter API key at [openrouter.ai/keys](https://openrouter.ai/keys), then create a local `.env` file from the example and add the key:
+Requires Node.js 20 or later and the [opencode CLI](https://opencode.ai) on your `PATH` (`opencode auth login` once if you have not used it before).
 
 ```sh
-cp .env.example .env
-# Edit .env and replace the placeholder with your API key.
 npm start
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and keep the `npm start` terminal running while using the app. The API key stays on the server and is never sent to the browser. The default model `openrouter/free` routes to available free models; free model availability and rate limits can vary.
+Open [http://localhost:3000](http://localhost:3000) and keep the `npm start` terminal running while using the app. No API key lives in this project: the CLI uses its own saved credentials, and the model runs on opencode's free tier.
 
-Alternatively, set `OPENAI_API_KEY` in your shell before running `npm start`. The app loads `.env` automatically; restart it after changing the file. Never commit or share your `.env` file.
+If the browser reports that it cannot reach the app server, restart it with `npm start`. If the CLI is missing or the free tier rejects a request, the app shows that error in the selected language.
 
-If the browser reports that it cannot reach the app server, restart it with `npm start`. If the server is reachable but the API key is missing or invalid, the app shows that service error in the selected language.
-
-Optional environment variables:
+Optional environment variables (see `.env.example`):
 
 - `PORT` — server port (default `3000`)
-- `OPENROUTER_API_KEY` — OpenRouter key (preferred); `OPENAI_API_KEY` is accepted for compatibility
-- `OPENAI_MODEL` — model name (default `openrouter/free`)
-- `OPENAI_BASE_URL` — chat completions URL (default `https://openrouter.ai/api/v1/chat/completions`)
+- `OPENCODE_MODEL` — model to run (default `opencode/deepseek-v4.1-flash-free`)
+- `OPENCODE_BIN` — path to the CLI if it is not on `PATH` (default `opencode`)
+- `OPENCODE_TIMEOUT_MS` — per-request timeout in milliseconds (default `120000`)
 
 The `POST /api/summarise` endpoint accepts `{"text":"...","language":"en"}` (use `"fa"` for Persian) and returns a server-sent event stream with `delta`, `error`, and `done` events. The interface direction, summary language, and Persian Vazirmatn font follow the selected language. Input is limited to 20,000 characters.
+
+## How it works
+
+`server.mjs` spawns `opencode run --format json` with a restricted `summariser` agent, streams the summary back as SSE, and kills the process if the browser disconnects. Run `npm test` to exercise the routes with a stub CLI.

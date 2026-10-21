@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
 async function listen(server) {
@@ -34,32 +37,45 @@ async function startApp(env) {
   throw new Error("The app server did not start.");
 }
 
-test("serves the page and streams a summary from the model endpoint", async (t) => {
-  const providerPayloads = [];
-  const mockProvider = createServer((request, response) => {
-    assert.equal(request.method, "POST");
-    assert.equal(request.headers.authorization, "Bearer test-key");
-    const chunks = [];
-    request.on("data", (chunk) => chunks.push(chunk));
-    request.on("end", () => {
-      providerPayloads.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-    });
-    response.writeHead(200, { "content-type": "text/event-stream" });
-    response.write('data: {"choices":[{"delta":{"content":"A concise "}}]}\n\n');
-    setTimeout(() => {
-      response.write('data: {"choices":[{"delta":{"content":"summary."}}]}\n\n');
-      response.end("data: [DONE]\n\n");
-    }, 60);
+// A stand-in for the opencode CLI that prints one --format json event and records its arguments.
+async function fakeOpencode(t, body) {
+  const dir = await mkdtemp(path.join(tmpdir(), "fake-opencode-"));
+  const bin = path.join(dir, "opencode");
+  const argsFile = path.join(dir, "args.json");
+  await writeFile(bin, `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)));\n${body}\n`);
+  await chmod(bin, 0o755);
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  return { bin, args: () => readFile(argsFile, "utf8").then(JSON.parse) };
+}
+
+const emit = (event) => `console.log(JSON.stringify(${JSON.stringify(event)}));`;
+const summaryEvent = (text) => ({ type: "text", part: { type: "text", text } });
+
+async function readStream(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let stream = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    stream += decoder.decode(value, { stream: true });
+  }
+  return stream;
+}
+
+async function summarise(baseUrl, body) {
+  const response = await fetch(`${baseUrl}/api/summarise`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
   });
-  const providerPort = await listen(mockProvider);
-  const { app, baseUrl } = await startApp({
-    OPENROUTER_API_KEY: "test-key",
-    OPENAI_BASE_URL: `http://127.0.0.1:${providerPort}/v1/chat/completions`
-  });
-  t.after(() => {
-    app.kill();
-    mockProvider.close();
-  });
+  return { response, stream: await readStream(response) };
+}
+
+test("serves the page and streams a summary from the opencode CLI", async (t) => {
+  const { bin } = await fakeOpencode(t, emit(summaryEvent("A concise summary.")));
+  const { app, baseUrl } = await startApp({ OPENCODE_BIN: bin });
+  t.after(() => app.kill());
 
   const page = await fetch(baseUrl);
   assert.equal(page.status, 200);
@@ -74,49 +90,18 @@ test("serves the page and streams a summary from the model endpoint", async (t) 
   });
   assert.equal(missingText.status, 400);
 
-  for (const language of ["en", "fa"]) {
-    const response = await fetch(`${baseUrl}/api/summarise`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: "A sample source — résumé with emoji 🙂.", language })
-    });
-    assert.equal(response.status, 200);
-    assert.match(response.headers.get("content-type"), /text\/event-stream/);
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    const firstChunk = await reader.read();
-    const firstText = decoder.decode(firstChunk.value);
-    assert.match(firstText, /event: delta/);
-    assert.match(firstText, /A concise/);
-    assert.doesNotMatch(firstText, /event: done/);
-
-    let stream = firstText;
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      stream += decoder.decode(value, { stream: true });
-    }
-    assert.match(stream, /summary\./);
-    assert.match(stream, /event: done/);
-  }
-  assert.equal(providerPayloads.length, 2);
-  assert.equal(providerPayloads[0].messages[1].content, "A sample source — résumé with emoji 🙂.");
-  assert.match(providerPayloads[0].messages[0].content, /in English/);
-  assert.match(providerPayloads[1].messages[0].content, /Persian \(Farsi\)/);
+  const { response, stream } = await summarise(baseUrl, { text: "A sample source — résumé with emoji 🙂.", language: "fa" });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /text\/event-stream/);
+  assert.match(stream, /event: delta/);
+  assert.match(stream, /A concise summary\./);
+  assert.match(stream, /event: done/);
 });
 
 test("validates language and localizes Persian validation errors", async (t) => {
-  const mockProvider = createServer((request, response) => response.end());
-  const providerPort = await listen(mockProvider);
-  const { app, baseUrl } = await startApp({
-    OPENROUTER_API_KEY: "test-key",
-    OPENAI_BASE_URL: `http://127.0.0.1:${providerPort}/v1/chat/completions`
-  });
-  t.after(() => {
-    app.kill();
-    mockProvider.close();
-  });
+  const { bin } = await fakeOpencode(t, "process.exit(0)");
+  const { app, baseUrl } = await startApp({ OPENCODE_BIN: bin });
+  t.after(() => app.kill());
 
   const empty = await fetch(`${baseUrl}/api/summarise`, {
     method: "POST",
@@ -135,15 +120,64 @@ test("validates language and localizes Persian validation errors", async (t) => 
   assert.match((await unsupported.json()).error, /en or fa/);
 });
 
-test("returns a clear error when the API key is not configured", async (t) => {
-  const { app, baseUrl } = await startApp({ OPENAI_API_KEY: "" });
+test("explains when the opencode CLI is not installed", async (t) => {
+  const { app, baseUrl } = await startApp({ OPENCODE_BIN: "/nonexistent/opencode" });
   t.after(() => app.kill());
 
-  const response = await fetch(`${baseUrl}/api/summarise`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ text: "A sample source.", language: "fa" })
-  });
-  assert.equal(response.status, 503);
-  assert.match((await response.json()).error, /OPENROUTER_API_KEY/);
+  const { stream } = await summarise(baseUrl, { text: "A sample source." });
+  assert.match(stream, /event: error/);
+  assert.match(stream, /Could not start the opencode CLI/);
+});
+
+test("explains when the free tier rejects the request", async (t) => {
+  const { bin } = await fakeOpencode(
+    t,
+    emit({ type: "error", error: { data: { message: "OpenCode's free tier can only be used from within OpenCode." } } })
+  );
+  const { app, baseUrl } = await startApp({ OPENCODE_BIN: bin });
+  t.after(() => app.kill());
+
+  const { stream } = await summarise(baseUrl, { text: "A sample source.", language: "fa" });
+  assert.match(stream, /event: error/);
+  assert.match(stream, /سطح رایگان opencode/);
+  assert.doesNotMatch(stream, /event: delta/);
+});
+
+test("stops a CLI run that exceeds the timeout", async (t) => {
+  const { bin } = await fakeOpencode(t, `setTimeout(() => {}, 60_000)`);
+  const { app, baseUrl } = await startApp({ OPENCODE_BIN: bin, OPENCODE_TIMEOUT_MS: "200" });
+  t.after(() => app.kill());
+
+  const { stream } = await summarise(baseUrl, { text: "A sample source." });
+  assert.match(stream, /event: error/);
+  assert.match(stream, /took too long/);
+});
+
+test("summarises Persian text in Persian even when the interface language is English", async (t) => {
+  const { bin, args } = await fakeOpencode(t, emit(summaryEvent("خلاصه.")));
+  const { app, baseUrl } = await startApp({ OPENCODE_BIN: bin });
+  t.after(() => app.kill());
+
+  const { stream } = await summarise(baseUrl, { text: "این یک متن فارسی برای آزمایش است.", language: "en" });
+  assert.match(stream, /خلاصه\./);
+
+  const passed = await args();
+  assert.match(passed.at(-1), /Persian \(Farsi\)/);
+  assert.doesNotMatch(passed.at(-1), /in English/);
+});
+
+test("passes the requested language and text to the CLI", async (t) => {
+  const { bin, args } = await fakeOpencode(t, emit(summaryEvent("خلاصه.")));
+  const { app, baseUrl } = await startApp({ OPENCODE_BIN: bin });
+  t.after(() => app.kill());
+
+  const { stream } = await summarise(baseUrl, { text: "متن نمونه", language: "fa" });
+  assert.match(stream, /خلاصه\./);
+
+  const passed = await args();
+  assert.deepEqual(passed.slice(0, 4), ["run", "--agent", "summariser", "--model"]);
+  assert.equal(passed[4], "opencode/deepseek-v4.1-flash-free");
+  assert.deepEqual(passed.slice(5, 7), ["--format", "json"]);
+  assert.match(passed.at(-1), /Persian \(Farsi\)/);
+  assert.match(passed.at(-1), /متن نمونه/);
 });

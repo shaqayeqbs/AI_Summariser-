@@ -1,26 +1,54 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT ?? 3000);
-const apiUrl = process.env.OPENAI_BASE_URL ?? "https://openrouter.ai/api/v1/chat/completions";
-const model = process.env.OPENAI_MODEL ?? "openrouter/free";
+const opencodeBin = process.env.OPENCODE_BIN ?? "opencode";
+const model = process.env.OPENCODE_MODEL ?? "opencode/deepseek-v4.1-flash-free";
+const timeoutMs = Number(process.env.OPENCODE_TIMEOUT_MS ?? 120_000);
 const maxTextLength = 20_000;
 const maxRequestBytes = maxTextLength * 6 + 1024;
+
+// ponytail: the free tier rejects requests when the read tool is disabled, so it stays on.
+// The summariser agent is told never to use tools and runs in the temp directory instead.
+const opencodeConfig = JSON.stringify({
+  agent: {
+    summariser: {
+      mode: "primary",
+      prompt: "You are a text summariser. Reply with the summary only: no preamble, headings, or commentary. Never use tools.",
+      tools: {
+        bash: false, edit: false, write: false, grep: false, glob: false,
+        list: false, webfetch: false, task: false, patch: false,
+        todowrite: false, question: false
+      }
+    }
+  }
+});
+
 const errorMessages = {
   en: {
     emptyText: "Paste some text to summarise.",
     textTooLong: (limit) => `Text must be ${limit} characters or fewer.`,
     invalidLanguage: "Language must be en or fa.",
-    missingApiKey: "The server is missing OPENROUTER_API_KEY. Add it to your environment and restart the app."
+    missingCli: "Could not start the opencode CLI. Install it from https://opencode.ai and restart the app.",
+    freeTierRejected: "The opencode free tier rejected this request. Update opencode to the latest version and restart the app.",
+    failed: (detail) => `The summariser failed: ${detail}`,
+    timedOut: "The summariser took too long and was stopped. Please try again.",
+    emptySummary: "The summariser returned an empty summary. Please try again."
   },
   fa: {
     emptyText: "لطفاً متنی برای خلاصه‌سازی وارد کنید.",
     textTooLong: (limit) => `متن باید حداکثر ${limit} نویسه باشد.`,
     invalidLanguage: "زبان باید انگلیسی یا فارسی باشد.",
-    missingApiKey: "کلید OPENROUTER_API_KEY در سرور تنظیم نشده است. آن را به متغیرهای محیطی اضافه کنید و برنامه را دوباره اجرا کنید."
+    missingCli: "اجرای opencode ممکن نشد. آن را از https://opencode.ai نصب کنید و برنامه را دوباره اجرا کنید.",
+    freeTierRejected: "سطح رایگان opencode این درخواست را نپذیرفت. opencode را به آخرین نسخه به‌روزرسانی کنید و برنامه را دوباره اجرا کنید.",
+    failed: (detail) => `خلاصه‌سازی ناموفق بود: ${detail}`,
+    timedOut: "خلاصه‌سازی بیش از حد طول کشید و متوقف شد. دوباره تلاش کنید.",
+    emptySummary: "سرویس خلاصه‌سازی خلاصه‌ی خالی برگرداند. دوباره تلاش کنید."
   }
 };
 
@@ -52,6 +80,86 @@ async function readJson(request) {
   }
 }
 
+function summarise(text, languageName, messages, sendEvent, done) {
+  const prompt = `Summarise the following text and reply only in ${languageName}, with no preamble. Text: ${text}`;
+  const child = spawn(
+    opencodeBin,
+    ["run", "--agent", "summariser", "--model", model, "--format", "json", prompt],
+    {
+      cwd: tmpdir(),
+      env: { ...process.env, OPENCODE_CONFIG_CONTENT: opencodeConfig },
+      stdio: ["ignore", "pipe", "pipe"]
+    }
+  );
+
+  let summary = "";
+  let buffer = "";
+  let stderr = "";
+  let failure;
+  let finished = false;
+
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    if (summary) {
+      sendEvent("delta", { text: summary });
+      sendEvent("done", {});
+    } else {
+      sendEvent("error", { error: failure ?? messages.emptySummary });
+    }
+    done();
+  };
+
+  const timer = setTimeout(() => {
+    failure = messages.timedOut;
+    child.kill("SIGKILL");
+  }, timeoutMs);
+
+  child.on("error", (error) => {
+    failure = error.code === "ENOENT" ? messages.missingCli : messages.failed(error.message);
+    finish();
+  });
+
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (event.type === "text" && typeof event.part?.text === "string") {
+        summary += event.part.text;
+      } else if (event.type === "error") {
+        const detail = event.error?.data?.message ?? event.error?.name ?? "unknown error";
+        failure = /free tier|FreeTierError/i.test(detail)
+          ? messages.freeTierRejected
+          : messages.failed(detail);
+      }
+    }
+  });
+
+  child.on("close", () => {
+    if (!summary && !failure) failure = messages.failed((stderr.trim() || "opencode exited without output").slice(0, 300));
+    finish();
+  });
+
+  return () => {
+    finished = true;
+    clearTimeout(timer);
+    child.kill("SIGKILL");
+  };
+}
+
 async function handleSummarise(request, response) {
   let payload;
   try {
@@ -78,60 +186,10 @@ async function handleSummarise(request, response) {
     return;
   }
 
-  const apiKey = process.env.OPENROUTER_API_KEY ?? process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    sendJson(response, 503, { error: messages.missingApiKey });
-    return;
-  }
-
-  const controller = new AbortController();
-  response.on("close", () => {
-    if (!response.writableEnded) controller.abort();
-  });
-
-  let upstream;
-  try {
-    upstream = await fetch(apiUrl, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        model,
-        stream: true,
-        messages: [
-          {
-            role: "system",
-            content: `Summarise the user's text clearly and accurately in ${language === "fa" ? "Persian (Farsi)" : "English"}. Preserve the key points, use concise plain language, and do not add information that is not in the source.`
-          },
-          { role: "user", content: text }
-        ]
-      })
-    });
-  } catch (error) {
-    if (controller.signal.aborted) return;
-    sendJson(response, 502, { error: `Could not reach the summarisation service: ${error.message}` });
-    return;
-  }
-
-  if (!upstream.ok) {
-    const details = await upstream.text();
-    let message = `Summarisation service returned ${upstream.status}.`;
-    try {
-      message = JSON.parse(details).error?.message ?? message;
-    } catch {
-      if (details) message = details.slice(0, 500);
-    }
-    sendJson(response, upstream.status === 401 ? 502 : upstream.status, { error: message });
-    return;
-  }
-
-  if (!upstream.body) {
-    sendJson(response, 502, { error: "The summarisation service returned an empty response." });
-    return;
-  }
+  // Persian input is summarised in Persian even when the interface is in English.
+  const persianLetters = text.match(/\p{Script=Arabic}/gu)?.length ?? 0;
+  const latinLetters = text.match(/[A-Za-z]/g)?.length ?? 0;
+  const summaryLanguage = persianLetters > latinLetters ? "fa" : language;
 
   response.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
@@ -140,43 +198,22 @@ async function handleSummarise(request, response) {
     "x-content-type-options": "nosniff"
   });
 
-  const reader = upstream.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  const sendEvent = (event, data) => response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  let closed = false;
+  const sendEvent = (event, data) => {
+    if (!closed) response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
 
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      buffer += decoder.decode(value, { stream: !done });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
+  const stop = summarise(text, summaryLanguage === "fa" ? "Persian (Farsi)" : "English", errorMessages[summaryLanguage], sendEvent, () => {
+    closed = true;
+    response.end();
+  });
 
-      for (const line of lines) {
-        if (!line.startsWith("data:")) continue;
-        const data = line.slice(5).trim();
-        if (data === "[DONE]") continue;
-        let chunk;
-        try {
-          chunk = JSON.parse(data);
-        } catch {
-          continue;
-        }
-        const delta = chunk.choices?.[0]?.delta?.content;
-        if (typeof delta === "string" && delta) sendEvent("delta", { text: delta });
-      }
-
-      if (done) break;
+  response.on("close", () => {
+    if (!response.writableEnded) {
+      closed = true;
+      stop();
     }
-    sendEvent("done", {});
-    response.end();
-  } catch (error) {
-    if (controller.signal.aborted) return;
-    sendEvent("error", { error: `The summary stream ended unexpectedly: ${error.message}` });
-    response.end();
-  } finally {
-    reader.releaseLock();
-  }
+  });
 }
 
 const server = createServer(async (request, response) => {

@@ -8,6 +8,8 @@ const loadingIndicator = document.querySelector("#loading-indicator");
 const errorMessage = document.querySelector("#error-message");
 const clearButton = document.querySelector("#clear-button");
 const languageButtons = document.querySelectorAll(".language-button");
+const themeToggle = document.querySelector("#theme-toggle");
+const themeColor = document.querySelector('meta[name="theme-color"]');
 
 let activeController;
 let currentLanguage = "en";
@@ -35,7 +37,9 @@ const translations = {
     loading: "Finding the signal in the noise…",
     connectionError: "Can't reach the app server. Make sure it is running with `npm start`, then try again.",
     footerFirst: "Made for the curious, and the short on time.",
-    footerSecond: "ONE THING AT A TIME"
+    footerSecond: "ONE THING AT A TIME",
+    themeToDark: "Switch to dark mode",
+    themeToLight: "Switch to light mode"
   },
   fa: {
     title: "Briefly — خلاصه‌ساز متن",
@@ -59,9 +63,31 @@ const translations = {
     loading: "در حال پیدا کردن نکته‌های اصلی…",
     connectionError: "ارتباط با سرور برنامه برقرار نشد. مطمئن شوید برنامه با دستور `npm start` اجرا شده است و دوباره تلاش کنید.",
     footerFirst: "برای کنجکاوان و کسانی که وقت کمی دارند.",
-    footerSecond: "هر بار، یک کار"
+    footerSecond: "هر بار، یک کار",
+    themeToDark: "تغییر به حالت تیره",
+    themeToLight: "تغییر به حالت روشن"
   }
 };
+
+function applyTheme(theme) {
+  const dark = theme === "dark";
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  themeColor.setAttribute("content", dark ? "#141713" : "#f5f4f0");
+  const copy = translations[currentLanguage];
+  themeToggle.setAttribute("aria-pressed", String(dark));
+  themeToggle.setAttribute("aria-label", dark ? copy.themeToLight : copy.themeToDark);
+}
+
+function setTheme(theme) {
+  applyTheme(theme);
+  try {
+    localStorage.setItem("theme", theme);
+  } catch {}
+}
+
+themeToggle.addEventListener("click", () => {
+  setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+});
 
 function setLanguage(language) {
   if (language !== "en" && language !== "fa") return;
@@ -92,6 +118,7 @@ function setLanguage(language) {
   document.querySelector("#footer-first").textContent = copy.footerFirst;
   document.querySelector("#footer-second").textContent = copy.footerSecond;
   count.textContent = `${input.value.length.toLocaleString(language)} / ${(20_000).toLocaleString(language)}`;
+  applyTheme(document.documentElement.dataset.theme);
   languageButtons.forEach((button) => {
     const selected = button.dataset.language === language;
     button.classList.toggle("is-active", selected);
